@@ -1,0 +1,66 @@
+#!/bin/sh
+
+cwd=$(dirname $0)
+
+NSENTER=nsenter
+which $NSENTER > /dev/null
+if [ $? -ne 0 ]
+then
+    echo "could not find nsenter"
+    exit 1
+fi
+
+if [ -z "$1" ]; then
+    echo "Usage: `basename "$0"` CONTAINER [COMMAND [ARG]...]"
+    echo ""
+    echo "Enters the Docker CONTAINER and executes the specified COMMAND."
+    echo "If COMMAND is not specified, runs an interactive shell in CONTAINER."
+    exit
+fi
+
+PID=$(docker inspect --format "{{.State.Pid}}" "$1")
+[ -z "$PID" ] && exit 1
+shift
+
+if [ "$(id -u)" -ne "0" ]; then
+    which sudo > /dev/null
+    if [ "$?" -eq "0" ]; then
+      SUDO="sudo "
+    else
+      echo "Can't find sudo, invoking nsenter as the user $USER." >&2
+    fi
+fi
+
+if [ -e $cwd/importenv ]
+then
+    IMPORTENV=$cwd/importenv
+    ENVIRON="/proc/$PID/environ"
+fi
+
+# nsenter flags
+OPTS="--target $PID --mount --uts --ipc --net --pid --"
+
+if [ $# -lt 1 ]; then
+    # No command
+    # Starts the shell as login shell
+    if [ -z "$IMPORTENV" ]
+    then
+        # clears all environment variables except for TERM
+        # initializes the environment variables HOME, SHELL, USER, LOGNAME, PATH
+        CMD="su - root"
+    else
+        # preserves the whole environment
+        CMD="su -m root"
+    fi
+else
+    # Has command
+    if [ -z "$IMPORTENV" ]
+    then
+        # Use env to clear all host environment variables
+        CMD="env -i $@"
+    else
+        # preserves the whole environment
+        CMD="$@"
+    fi
+fi
+$SUDO $IMPORTENV $ENVIRON $NSENTER $OPTS $CMD
